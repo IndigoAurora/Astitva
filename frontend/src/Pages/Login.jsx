@@ -11,6 +11,9 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+const USERS_KEY = "astitvaUsers";
+const CURRENT_USER_KEY = "astitvaCurrentUser";
+
 function Login() {
   const navigate = useNavigate();
 
@@ -30,6 +33,45 @@ function Login() {
   const [message, setMessage] = useState("");
 
   /* =====================================================
+     LOCAL STORAGE HELPERS
+  ===================================================== */
+
+  const getUsers = () => {
+    try {
+      const savedUsers = localStorage.getItem(USERS_KEY);
+
+      if (!savedUsers) {
+        return [];
+      }
+
+      const users = JSON.parse(savedUsers);
+
+      return Array.isArray(users) ? users : [];
+    } catch (error) {
+      console.error("Could not read users:", error);
+      return [];
+    }
+  };
+
+  const saveUsers = (users) => {
+    localStorage.setItem(
+      USERS_KEY,
+      JSON.stringify(users)
+    );
+  };
+
+  const saveCurrentUser = (user) => {
+    localStorage.setItem(
+      CURRENT_USER_KEY,
+      JSON.stringify({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+      })
+    );
+  };
+
+  /* =====================================================
      FORM HANDLING
   ===================================================== */
 
@@ -41,6 +83,10 @@ function Login() {
 
     setMessage("");
   };
+
+  /* =====================================================
+     SWITCH MODE
+  ===================================================== */
 
   const switchMode = (newMode) => {
     setMode(newMode);
@@ -65,28 +111,59 @@ function Login() {
   const handleLogin = (e) => {
     e.preventDefault();
 
-    if (!formData.email || !formData.password) {
-      setMessage("Please enter your email and password.");
+    const email = formData.email.trim().toLowerCase();
+    const password = formData.password;
+
+    if (!email || !password) {
+      setMessage(
+        "Please enter your email and password."
+      );
+
+      return;
+    }
+
+    const users = getUsers();
+
+    /*
+      Find the account created during signup.
+    */
+
+    const user = users.find(
+      (account) =>
+        account.email.toLowerCase() === email
+    );
+
+    if (!user) {
+      setMessage(
+        "No account found with this email. Please create an account first."
+      );
+
       return;
     }
 
     /*
-      BACKEND CONNECTION WILL GO HERE
+      Temporary frontend-only password check.
 
-      Example later:
-
-      const response = await api.post("/login", {
-        email: formData.email,
-        password: formData.password,
-      });
+      This will later be replaced by the backend
+      authentication system.
     */
 
-    console.log("Login:", {
-      email: formData.email,
-      password: formData.password,
-    });
+    if (user.password !== password) {
+      setMessage(
+        "Incorrect password. Please try again."
+      );
 
-    // Temporary navigation
+      return;
+    }
+
+    /*
+      Save currently logged-in user.
+    */
+
+    saveCurrentUser(user);
+
+    setMessage("");
+
     navigate("/dashboard");
   };
 
@@ -97,28 +174,87 @@ function Login() {
   const handleSignup = (e) => {
     e.preventDefault();
 
+    const name = formData.name.trim();
+    const email = formData.email.trim().toLowerCase();
+    const password = formData.password;
+    const confirmPassword =
+      formData.confirmPassword;
+
     if (
-      !formData.name ||
-      !formData.email ||
-      !formData.password ||
-      !formData.confirmPassword
+      !name ||
+      !email ||
+      !password ||
+      !confirmPassword
     ) {
       setMessage("Please fill in all fields.");
+
       return;
     }
 
-    if (formData.password !== formData.confirmPassword) {
+    if (password.length < 6) {
+      setMessage(
+        "Password must be at least 6 characters."
+      );
+
+      return;
+    }
+
+    if (password !== confirmPassword) {
       setMessage("Passwords do not match.");
+
+      return;
+    }
+
+    const users = getUsers();
+
+    /*
+      Prevent duplicate accounts with the same email.
+    */
+
+    const existingUser = users.find(
+      (user) =>
+        user.email.toLowerCase() === email
+    );
+
+    if (existingUser) {
+      setMessage(
+        "An account with this email already exists. Please login instead."
+      );
+
       return;
     }
 
     /*
-      BACKEND SIGNUP WILL GO HERE
+      Create a new frontend-only account.
     */
 
-    console.log("Signup:", formData);
+    const newUser = {
+      id:
+        typeof crypto !== "undefined" &&
+        crypto.randomUUID
+          ? crypto.randomUUID()
+          : Date.now().toString(),
 
-    // Temporary navigation
+      name,
+      email,
+      password,
+
+      createdAt: new Date().toISOString(),
+    };
+
+    const updatedUsers = [
+      ...users,
+      newUser,
+    ];
+
+    saveUsers(updatedUsers);
+
+    /*
+      Automatically log in the newly created user.
+    */
+
+    saveCurrentUser(newUser);
+
     navigate("/dashboard");
   };
 
@@ -129,30 +265,89 @@ function Login() {
   const handleForgotPassword = (e) => {
     e.preventDefault();
 
+    const email = formData.email.trim().toLowerCase();
+    const newPassword = formData.password;
+    const confirmPassword =
+      formData.confirmPassword;
+
     if (
-      !formData.email ||
-      !formData.password ||
-      !formData.confirmPassword
+      !email ||
+      !newPassword ||
+      !confirmPassword
     ) {
       setMessage("Please fill in all fields.");
+
       return;
     }
 
-    if (formData.password !== formData.confirmPassword) {
+    if (newPassword.length < 6) {
+      setMessage(
+        "Password must be at least 6 characters."
+      );
+
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
       setMessage("Passwords do not match.");
+
+      return;
+    }
+
+    const users = getUsers();
+
+    const userIndex = users.findIndex(
+      (user) =>
+        user.email.toLowerCase() === email
+    );
+
+    if (userIndex === -1) {
+      setMessage(
+        "No account found with this email."
+      );
+
       return;
     }
 
     /*
-      BACKEND PASSWORD RESET WILL GO HERE
+      Update password.
     */
 
-    console.log("Reset password:", {
-      email: formData.email,
-      newPassword: formData.password,
-    });
+    users[userIndex].password = newPassword;
 
-    setMessage("Password updated successfully.");
+    saveUsers(users);
+
+    /*
+      If this user is currently logged in,
+      update the current user information too.
+    */
+
+    const currentUser = localStorage.getItem(
+      CURRENT_USER_KEY
+    );
+
+    if (currentUser) {
+      try {
+        const parsedCurrentUser =
+          JSON.parse(currentUser);
+
+        if (
+          parsedCurrentUser.email.toLowerCase() ===
+          email
+        ) {
+          saveCurrentUser(users[userIndex]);
+        }
+      } catch (error) {
+        console.error(
+          "Could not update current user:",
+          error
+        );
+      }
+    }
+
+    setMessage(
+      "Password updated successfully."
+    );
 
     setTimeout(() => {
       switchMode("login");
@@ -227,14 +422,13 @@ function Login() {
 
       <main className="grid min-h-[calc(100vh-88px)] grid-cols-1 lg:grid-cols-[38%_62%]">
 
-
         {/* =====================================================
             LEFT BRAND SECTION
         ===================================================== */}
 
         <section className="relative hidden overflow-hidden bg-[#123C34] lg:flex">
 
-          {/* subtle background texture */}
+          {/* Background texture */}
 
           <div className="absolute inset-0 opacity-[0.045]">
 
@@ -250,7 +444,7 @@ function Login() {
           </div>
 
 
-          {/* subtle decorative curve */}
+          {/* Decorative curves */}
 
           <div className="absolute -bottom-[190px] -right-[190px] h-[430px] w-[430px] rounded-full border border-[#C69C5C]/20" />
 
@@ -299,13 +493,9 @@ function Login() {
             </div>
 
 
-            {/* =================================================
-                FINGERPRINT CARD
-            ================================================= */}
+            {/* FINGERPRINT CARD */}
 
             <div className="mt-12 max-w-[430px] border border-[#C5A16A]/35 bg-[#0D3029]/40 p-6">
-
-              {/* Card top */}
 
               <div className="flex items-center justify-between border-b border-white/10 pb-5">
 
@@ -358,7 +548,6 @@ function Login() {
                   <p className="mt-2 font-mono text-[12px] text-[#EEE7DA]">
                     8f2c...91ad
                   </p>
-
 
                   <div className="mt-3 flex items-center gap-2">
 
@@ -435,7 +624,6 @@ function Login() {
 
           <div className="w-full max-w-[590px]">
 
-
             {/* =================================================
                 LOGIN
             ================================================= */}
@@ -443,31 +631,23 @@ function Login() {
             {mode === "login" && (
               <div>
 
-                {/* Heading */}
-
                 <div className="mb-10">
 
                   <p className="text-[9px] font-semibold tracking-[0.25em] text-[#A97B42]">
                     WELCOME BACK
                   </p>
 
-
                   <h2 className="mt-4 font-serif text-[48px] leading-none tracking-[-0.04em] text-[#153D35] sm:text-[54px]">
                     Sign in.
                   </h2>
 
-
                   <p className="mt-5 max-w-[470px] text-[14px] leading-6 text-[#69716C]">
-
                     Access your workspace and continue creating
                     proof for the work that belongs to you.
-
                   </p>
 
                 </div>
 
-
-                {/* FORM */}
 
                 <form
                   onSubmit={handleLogin}
@@ -485,7 +665,6 @@ function Login() {
                       Email address
                     </label>
 
-
                     <div className="relative">
 
                       <Mail
@@ -493,7 +672,6 @@ function Login() {
                         strokeWidth={1.5}
                         className="absolute left-4 top-1/2 -translate-y-1/2 text-[#7B827D]"
                       />
-
 
                       <input
                         id="login-email"
@@ -524,10 +702,11 @@ function Login() {
                         Password
                       </label>
 
-
                       <button
                         type="button"
-                        onClick={() => switchMode("forgot")}
+                        onClick={() =>
+                          switchMode("forgot")
+                        }
                         className="text-[11px] font-medium text-[#9A7040] transition hover:text-[#183D35]"
                       >
                         Forgot password?
@@ -544,7 +723,6 @@ function Login() {
                         className="absolute left-4 top-1/2 -translate-y-1/2 text-[#7B827D]"
                       />
 
-
                       <input
                         id="login-password"
                         type={
@@ -560,21 +738,20 @@ function Login() {
                         className="h-[58px] w-full rounded-[3px] border border-[#D6D0C6] bg-[#FBFAF7] pl-12 pr-12 text-[14px] text-[#17231F] outline-none transition placeholder:text-[#A4A49F] focus:border-[#183D35] focus:ring-1 focus:ring-[#183D35]/10"
                       />
 
-
                       <button
                         type="button"
                         onClick={() =>
-                          setShowPassword(!showPassword)
+                          setShowPassword(
+                            !showPassword
+                          )
                         }
                         className="absolute right-4 top-1/2 -translate-y-1/2 text-[#7A827D] transition hover:text-[#183D35]"
                       >
-
                         {showPassword ? (
                           <EyeOff size={18} />
                         ) : (
                           <Eye size={18} />
                         )}
-
                       </button>
 
                     </div>
@@ -611,7 +788,7 @@ function Login() {
                 </form>
 
 
-                {/* OR / SIGNUP */}
+                {/* SIGNUP */}
 
                 <div className="mt-9 border-t border-[#DDD7CD] pt-7">
 
@@ -621,9 +798,10 @@ function Login() {
                       New to Astitva?
                     </span>
 
-
                     <button
-                      onClick={() => switchMode("signup")}
+                      onClick={() =>
+                        switchMode("signup")
+                      }
                       className="group flex items-center gap-2 text-[12px] font-semibold text-[#183D35] transition hover:text-[#A7793D]"
                     >
 
@@ -652,7 +830,9 @@ function Login() {
               <div>
 
                 <button
-                  onClick={() => switchMode("login")}
+                  onClick={() =>
+                    switchMode("login")
+                  }
                   className="mb-9 flex items-center gap-2 text-[11px] text-[#68716C] transition hover:text-[#183D35]"
                 >
 
@@ -669,13 +849,11 @@ function Login() {
                     CREATE YOUR ACCOUNT
                   </p>
 
-
                   <h2 className="mt-4 font-serif text-[46px] leading-[1.02] tracking-[-0.04em] text-[#153D35]">
                     Create your
                     <br />
                     account.
                   </h2>
-
 
                   <p className="mt-5 max-w-[470px] text-[14px] leading-6 text-[#69716C]">
                     Create your workspace and start building
@@ -759,7 +937,9 @@ function Login() {
                       <button
                         type="button"
                         onClick={() =>
-                          setShowPassword(!showPassword)
+                          setShowPassword(
+                            !showPassword
+                          )
                         }
                         className="absolute right-4 top-1/2 -translate-y-1/2 text-[#7A827D]"
                       >
@@ -824,12 +1004,16 @@ function Login() {
                   </div>
 
 
+                  {/* MESSAGE */}
+
                   {message && (
                     <div className="border-l-2 border-[#A7793D] bg-[#EEE5D7] px-4 py-3 text-xs text-[#66543C]">
                       {message}
                     </div>
                   )}
 
+
+                  {/* CREATE ACCOUNT */}
 
                   <button
                     type="submit"
@@ -855,7 +1039,9 @@ function Login() {
                   </span>
 
                   <button
-                    onClick={() => switchMode("login")}
+                    onClick={() =>
+                      switchMode("login")
+                    }
                     className="ml-2 text-[11px] font-semibold text-[#183D35] hover:text-[#A7793D]"
                   >
                     Login
@@ -875,7 +1061,9 @@ function Login() {
               <div>
 
                 <button
-                  onClick={() => switchMode("login")}
+                  onClick={() =>
+                    switchMode("login")
+                  }
                   className="mb-9 flex items-center gap-2 text-[11px] text-[#68716C] transition hover:text-[#183D35]"
                 >
 
@@ -892,13 +1080,11 @@ function Login() {
                     PASSWORD RECOVERY
                   </p>
 
-
                   <h2 className="mt-4 font-serif text-[46px] leading-[1.02] tracking-[-0.04em] text-[#153D35]">
                     Reset your
                     <br />
                     password.
                   </h2>
-
 
                   <p className="mt-5 max-w-[470px] text-[14px] leading-6 text-[#69716C]">
                     Enter the email you used for your Astitva
@@ -976,7 +1162,9 @@ function Login() {
                       <button
                         type="button"
                         onClick={() =>
-                          setShowPassword(!showPassword)
+                          setShowPassword(
+                            !showPassword
+                          )
                         }
                         className="absolute right-4 top-1/2 -translate-y-1/2 text-[#7A827D]"
                       >
@@ -1051,7 +1239,9 @@ function Login() {
                   {message && (
                     <div
                       className={`border-l-2 px-4 py-3 text-xs ${
-                        message.includes("successfully")
+                        message.includes(
+                          "successfully"
+                        )
                           ? "border-[#5C8068] bg-[#E8F0E9] text-[#315A47]"
                           : "border-[#A7793D] bg-[#EEE5D7] text-[#66543C]"
                       }`}
@@ -1083,9 +1273,7 @@ function Login() {
             )}
 
 
-            {/* =================================================
-                SECURITY NOTE
-            ================================================= */}
+            {/* SECURITY NOTE */}
 
             <div className="mt-12 flex items-center justify-center gap-2 text-[10px] text-[#858C87]">
 

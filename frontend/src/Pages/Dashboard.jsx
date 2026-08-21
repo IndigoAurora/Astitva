@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
@@ -15,11 +15,70 @@ import {
 
 import Sidebar from "../components/Sidebar";
 
+const CURRENT_USER_KEY = "astitvaCurrentUser";
+
 function Dashboard() {
   const navigate = useNavigate();
 
   const [profileOpen, setProfileOpen] = useState(false);
   const [proofMenuOpen, setProofMenuOpen] = useState(false);
+
+  /*
+  =========================================================
+  USER
+  =========================================================
+  */
+
+  const [user, setUser] = useState({
+    name: "User",
+    email: "",
+  });
+
+  /*
+  =========================================================
+  LOAD CURRENT LOGGED-IN USER
+  =========================================================
+  */
+
+  useEffect(() => {
+    const savedUser =
+      localStorage.getItem(CURRENT_USER_KEY);
+
+    if (!savedUser) {
+      return;
+    }
+
+    try {
+      const parsedUser = JSON.parse(savedUser);
+
+      if (parsedUser?.name) {
+        setUser({
+          name: parsedUser.name,
+          email: parsedUser.email || "",
+        });
+      }
+    } catch (error) {
+      console.error(
+        "Could not read logged-in user:",
+        error
+      );
+    }
+  }, []);
+
+  /*
+  =========================================================
+  USER DISPLAY HELPERS
+  =========================================================
+  */
+
+  const displayName =
+    user.name?.trim() || "User";
+
+  const firstName =
+    displayName.split(" ")[0] || displayName;
+
+  const userInitial =
+    displayName.charAt(0).toUpperCase();
 
   /*
   =========================================================
@@ -39,11 +98,23 @@ function Dashboard() {
     time: "10:30 AM",
   };
 
-  /* =====================================================
-     NAVIGATION
-  ===================================================== */
+  /*
+  =========================================================
+  NAVIGATION
+  =========================================================
+  */
 
   const handleLogout = () => {
+    /*
+      Remove the currently logged-in user.
+    */
+
+    localStorage.removeItem(
+      CURRENT_USER_KEY
+    );
+
+    setProfileOpen(false);
+
     navigate("/login");
   };
 
@@ -57,6 +128,7 @@ function Dashboard() {
 
   const handleProfile = () => {
     setProfileOpen((prev) => !prev);
+    setProofMenuOpen(false);
   };
 
   const handleSettings = () => {
@@ -72,6 +144,7 @@ function Dashboard() {
       ===================================================== */}
 
       <Sidebar />
+
 
       {/* =====================================================
           MAIN DASHBOARD AREA
@@ -114,6 +187,7 @@ function Dashboard() {
               </span>
             </div>
 
+
             {/* Brand */}
 
             <div className="text-left">
@@ -130,6 +204,7 @@ function Dashboard() {
 
           </button>
 
+
           {/* =================================================
               PAGE TITLE
           ================================================= */}
@@ -137,6 +212,7 @@ function Dashboard() {
           <div className="hidden text-[17px] font-medium text-[#303A36] md:block">
             Dashboard
           </div>
+
 
           {/* =================================================
               PROFILE
@@ -152,14 +228,16 @@ function Dashboard() {
               {/* Welcome */}
 
               <span className="hidden text-[14px] text-[#68716C] sm:block">
-                Welcome, Kajal
+                Welcome, {firstName}
               </span>
+
 
               {/* Profile Circle */}
 
               <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[#B99152] font-serif text-[18px] text-white">
-                K
+                {userInitial}
               </span>
+
 
               {/* Arrow */}
 
@@ -167,18 +245,38 @@ function Dashboard() {
                 size={17}
                 strokeWidth={1.5}
                 className={`hidden text-[#68716C] transition-transform sm:block ${
-                  profileOpen ? "rotate-180" : ""
+                  profileOpen
+                    ? "rotate-180"
+                    : ""
                 }`}
               />
 
             </button>
+
 
             {/* =================================================
                 PROFILE DROPDOWN
             ================================================= */}
 
             {profileOpen && (
-              <div className="absolute right-0 top-14 z-30 w-52 border border-[#DCD5CA] bg-[#FBF9F4] p-2 shadow-lg">
+              <div className="absolute right-0 top-14 z-30 w-56 border border-[#DCD5CA] bg-[#FBF9F4] p-2 shadow-lg">
+
+                {/* USER INFO */}
+
+                <div className="border-b border-[#E3DDD3] px-4 py-3">
+
+                  <p className="truncate text-[12px] font-medium text-[#263630]">
+                    {displayName}
+                  </p>
+
+                  {user.email && (
+                    <p className="mt-1 truncate text-[9px] text-[#8A918C]">
+                      {user.email}
+                    </p>
+                  )}
+
+                </div>
+
 
                 {/* Dashboard */}
 
@@ -192,6 +290,7 @@ function Dashboard() {
                   Dashboard
                 </button>
 
+
                 {/* Account Settings */}
 
                 <button
@@ -201,7 +300,9 @@ function Dashboard() {
                   Account settings
                 </button>
 
+
                 <div className="my-1 border-t border-[#E3DDD3]" />
+
 
                 {/* Logout */}
 
@@ -218,6 +319,7 @@ function Dashboard() {
           </div>
 
         </header>
+
 
         {/* ===================================================
             MAIN CONTENT
@@ -239,11 +341,13 @@ function Dashboard() {
                 YOUR WORKSPACE
               </p>
 
+
               {/* Main Heading */}
 
               <h1 className="mt-4 font-serif text-[44px] leading-[1.05] tracking-[-0.035em] text-[#173C34] sm:text-[50px] lg:text-[56px]">
-                Welcome, Kajal
+                Welcome, {displayName}
               </h1>
+
 
               {/* Description */}
 
@@ -252,6 +356,7 @@ function Dashboard() {
               </p>
 
             </div>
+
 
             {/* =================================================
                 OWNERSHIP CARD
@@ -274,6 +379,7 @@ function Dashboard() {
             </div>
 
           </section>
+
 
           {/* =================================================
               STAMP NEW CREATION
@@ -313,6 +419,7 @@ function Dashboard() {
 
               </div>
 
+
               {/* Text */}
 
               <div>
@@ -329,6 +436,7 @@ function Dashboard() {
 
             </div>
 
+
             {/* Arrow */}
 
             <ArrowRight
@@ -338,6 +446,7 @@ function Dashboard() {
             />
 
           </button>
+
 
           {/* =================================================
               STATISTICS
@@ -382,6 +491,7 @@ function Dashboard() {
 
             </button>
 
+
             {/* VERIFIED */}
 
             <button
@@ -419,6 +529,7 @@ function Dashboard() {
 
             </button>
 
+
             {/* RECENT */}
 
             <button
@@ -455,6 +566,7 @@ function Dashboard() {
               </p>
 
             </button>
+
 
             {/* BLOCKCHAIN */}
 
@@ -495,6 +607,7 @@ function Dashboard() {
 
           </section>
 
+
           {/* =================================================
               RECENT PROOFS
           ================================================= */}
@@ -517,6 +630,7 @@ function Dashboard() {
 
               </div>
 
+
               <button
                 onClick={handleStampWork}
                 className="text-[12px] font-medium text-[#9A7040] transition hover:text-[#173C34]"
@@ -525,6 +639,7 @@ function Dashboard() {
               </button>
 
             </div>
+
 
             {/* SINGLE PROOF */}
 
@@ -555,6 +670,7 @@ function Dashboard() {
 
                 </div>
 
+
                 {/* FILE NAME */}
 
                 <div className="min-w-0 flex-1">
@@ -569,6 +685,7 @@ function Dashboard() {
 
                 </div>
 
+
                 {/* HASH */}
 
                 <div className="hidden w-[170px] sm:block">
@@ -582,6 +699,7 @@ function Dashboard() {
                   </p>
 
                 </div>
+
 
                 {/* STATUS */}
 
@@ -600,6 +718,7 @@ function Dashboard() {
 
                 </div>
 
+
                 {/* DATE */}
 
                 <div className="hidden w-[110px] text-right md:block">
@@ -616,6 +735,7 @@ function Dashboard() {
 
               </button>
 
+
               {/* =================================================
                   THREE DOT MENU
               ================================================= */}
@@ -625,7 +745,10 @@ function Dashboard() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    setProofMenuOpen((prev) => !prev);
+
+                    setProofMenuOpen(
+                      (prev) => !prev
+                    );
                   }}
                   className="
                     flex
@@ -646,6 +769,7 @@ function Dashboard() {
 
                 </button>
 
+
                 {/* MENU */}
 
                 {proofMenuOpen && (
@@ -660,6 +784,7 @@ function Dashboard() {
                     >
                       View proof
                     </button>
+
 
                     <button
                       onClick={() => {
@@ -679,6 +804,7 @@ function Dashboard() {
             </div>
 
           </section>
+
 
           {/* =================================================
               FOOTER NOTE
