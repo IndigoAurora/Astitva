@@ -17,11 +17,199 @@ import Sidebar from "../components/Sidebar";
 
 const CURRENT_USER_KEY = "astitvaCurrentUser";
 
+/* =========================================================
+   INDEXED DB
+   Same database used by Uploads.jsx
+========================================================= */
+
+const DB_NAME = "astitva-files";
+const DB_VERSION = 1;
+const STORE_NAME = "proofs";
+
+const openDatabase = () => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(
+      DB_NAME,
+      DB_VERSION
+    );
+
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        const store = db.createObjectStore(
+          STORE_NAME,
+          {
+            keyPath: "id",
+          }
+        );
+
+        store.createIndex(
+          "createdAt",
+          "createdAt",
+          {
+            unique: false,
+          }
+        );
+      }
+    };
+
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+
+    request.onerror = () => {
+      reject(request.error);
+    };
+  });
+};
+
+
+/* =========================================================
+   GET ALL PROOFS
+========================================================= */
+
+const getAllProofs = async () => {
+  const db = await openDatabase();
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(
+      STORE_NAME,
+      "readonly"
+    );
+
+    const store =
+      transaction.objectStore(STORE_NAME);
+
+    const request = store.getAll();
+
+    request.onsuccess = () => {
+      const results = request.result.sort(
+        (a, b) =>
+          new Date(b.createdAt) -
+          new Date(a.createdAt)
+      );
+
+      resolve(results);
+    };
+
+    request.onerror = () => {
+      reject(request.error);
+    };
+  });
+};
+
+
+/* =========================================================
+   FILE SIZE FORMATTER
+========================================================= */
+
+const formatFileSize = (bytes) => {
+  if (!bytes) {
+    return "0 KB";
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(
+      bytes / 1024
+    ).toFixed(1)} KB`;
+  }
+
+  return `${(
+    bytes /
+    (1024 * 1024)
+  ).toFixed(1)} MB`;
+};
+
+
+/* =========================================================
+   DATE FORMATTER
+========================================================= */
+
+const formatDate = (date) => {
+  if (!date) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat(
+    "en-IN",
+    {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }
+  ).format(new Date(date));
+};
+
+
+/* =========================================================
+   TIME FORMATTER
+========================================================= */
+
+const formatTime = (date) => {
+  if (!date) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat(
+    "en-IN",
+    {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }
+  ).format(new Date(date));
+};
+
+
+/* =========================================================
+   FILE TYPE
+========================================================= */
+
+const getFileType = (proof) => {
+  if (
+    proof?.type ===
+    "application/pdf"
+  ) {
+    return "PDF";
+  }
+
+  if (
+    proof?.name?.includes(".")
+  ) {
+    return proof.name
+      .split(".")
+      .pop()
+      .toUpperCase();
+  }
+
+  return "FILE";
+};
+
+
+/* =========================================================
+   DASHBOARD COMPONENT
+========================================================= */
+
 function Dashboard() {
   const navigate = useNavigate();
 
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [proofMenuOpen, setProofMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] =
+    useState(false);
+
+  const [proofMenuOpen, setProofMenuOpen] =
+    useState(false);
+
+  const [history, setHistory] =
+    useState([]);
+
+  const [loadingHistory, setLoadingHistory] =
+    useState(true);
+
 
   /*
   =========================================================
@@ -34,6 +222,7 @@ function Dashboard() {
     email: "",
   });
 
+
   /*
   =========================================================
   LOAD CURRENT LOGGED-IN USER
@@ -42,19 +231,23 @@ function Dashboard() {
 
   useEffect(() => {
     const savedUser =
-      localStorage.getItem(CURRENT_USER_KEY);
+      localStorage.getItem(
+        CURRENT_USER_KEY
+      );
 
     if (!savedUser) {
       return;
     }
 
     try {
-      const parsedUser = JSON.parse(savedUser);
+      const parsedUser =
+        JSON.parse(savedUser);
 
       if (parsedUser?.name) {
         setUser({
           name: parsedUser.name,
-          email: parsedUser.email || "",
+          email:
+            parsedUser.email || "",
         });
       }
     } catch (error) {
@@ -64,6 +257,71 @@ function Dashboard() {
       );
     }
   }, []);
+
+
+  /*
+  =========================================================
+  LOAD PROOF HISTORY
+  =========================================================
+  */
+
+  useEffect(() => {
+    loadHistory();
+
+    const handleFocus = () => {
+      loadHistory();
+    };
+
+    window.addEventListener(
+      "focus",
+      handleFocus
+    );
+
+    return () => {
+      window.removeEventListener(
+        "focus",
+        handleFocus
+      );
+    };
+  }, []);
+
+
+  /*
+  =========================================================
+  LOAD HISTORY FUNCTION
+  =========================================================
+  */
+
+  const loadHistory = async () => {
+    try {
+      setLoadingHistory(true);
+
+      const proofs =
+        await getAllProofs();
+
+      setHistory(proofs);
+    } catch (error) {
+      console.error(
+        "Could not load proof history:",
+        error
+      );
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+
+  /*
+  =========================================================
+  LATEST PROOF
+  =========================================================
+  */
+
+  const proof =
+    history.length > 0
+      ? history[0]
+      : null;
+
 
   /*
   =========================================================
@@ -75,28 +333,14 @@ function Dashboard() {
     user.name?.trim() || "User";
 
   const firstName =
-    displayName.split(" ")[0] || displayName;
+    displayName.split(" ")[0] ||
+    displayName;
 
   const userInitial =
-    displayName.charAt(0).toUpperCase();
+    displayName
+      .charAt(0)
+      .toUpperCase();
 
-  /*
-  =========================================================
-  TEMPORARY SINGLE PROOF
-
-  This is only here until Anshul's backend is connected.
-  Later this data will come from the API.
-  =========================================================
-  */
-
-  const proof = {
-    name: "portfolio.pdf",
-    size: "2.4 MB",
-    hash: "8f2c...91ad",
-    status: "Verified",
-    date: "21 Aug 2026",
-    time: "10:30 AM",
-  };
 
   /*
   =========================================================
@@ -105,10 +349,6 @@ function Dashboard() {
   */
 
   const handleLogout = () => {
-    /*
-      Remove the currently logged-in user.
-    */
-
     localStorage.removeItem(
       CURRENT_USER_KEY
     );
@@ -118,23 +358,68 @@ function Dashboard() {
     navigate("/login");
   };
 
+
   const handleStampWork = () => {
     navigate("/uploads");
   };
+
 
   const handleProofClick = () => {
     navigate("/certificate");
   };
 
+
   const handleProfile = () => {
-    setProfileOpen((prev) => !prev);
+    setProfileOpen(
+      (prev) => !prev
+    );
+
     setProofMenuOpen(false);
   };
 
+
   const handleSettings = () => {
     setProfileOpen(false);
+
     navigate("/settings");
   };
+
+
+  /*
+  =========================================================
+  STATISTICS
+  =========================================================
+  */
+
+  const totalProofs =
+    history.length;
+
+  const verifiedProofs =
+    history.filter(
+      (item) =>
+        item.status ===
+        "Verified"
+    ).length;
+
+  const recentProofs =
+    history.length > 0
+      ? 1
+      : 0;
+
+  const blockchainProofs =
+    history.filter(
+      (item) =>
+        item.status ===
+          "Verified" &&
+        item.txHash
+    ).length;
+
+
+  /*
+  =========================================================
+  RETURN
+  =========================================================
+  */
 
   return (
     <div className="flex min-h-screen bg-[#F7F3EB] text-[#17241F]">
@@ -163,7 +448,9 @@ function Dashboard() {
           ================================================= */}
 
           <button
-            onClick={() => navigate("/dashboard")}
+            onClick={() =>
+              navigate("/dashboard")
+            }
             className="flex items-center gap-5"
           >
 
@@ -282,8 +569,13 @@ function Dashboard() {
 
                 <button
                   onClick={() => {
-                    setProfileOpen(false);
-                    navigate("/dashboard");
+                    setProfileOpen(
+                      false
+                    );
+
+                    navigate(
+                      "/dashboard"
+                    );
                   }}
                   className="w-full px-4 py-3 text-left text-[12px] text-[#34403A] transition hover:bg-[#F0ECE4]"
                 >
@@ -294,7 +586,9 @@ function Dashboard() {
                 {/* Account Settings */}
 
                 <button
-                  onClick={handleSettings}
+                  onClick={
+                    handleSettings
+                  }
                   className="w-full px-4 py-3 text-left text-[12px] text-[#34403A] transition hover:bg-[#F0ECE4]"
                 >
                   Account settings
@@ -307,7 +601,9 @@ function Dashboard() {
                 {/* Logout */}
 
                 <button
-                  onClick={handleLogout}
+                  onClick={
+                    handleLogout
+                  }
                   className="w-full px-4 py-3 text-left text-[12px] text-[#8B5C3A] transition hover:bg-[#F0ECE4]"
                 >
                   Logout
@@ -386,7 +682,9 @@ function Dashboard() {
           ================================================= */}
 
           <button
-            onClick={handleStampWork}
+            onClick={
+              handleStampWork
+            }
             className="
               group
               mt-11
@@ -457,7 +755,9 @@ function Dashboard() {
             {/* TOTAL PROOFS */}
 
             <button
-              onClick={handleProofClick}
+              onClick={
+                handleProofClick
+              }
               className="
                 border
                 border-[#E0DAD0]
@@ -480,7 +780,12 @@ function Dashboard() {
                 />
 
                 <span className="font-serif text-[26px] text-[#24352F]">
-                  01
+                  {totalProofs
+                    .toString()
+                    .padStart(
+                      2,
+                      "0"
+                    )}
                 </span>
 
               </div>
@@ -495,7 +800,9 @@ function Dashboard() {
             {/* VERIFIED */}
 
             <button
-              onClick={handleProofClick}
+              onClick={
+                handleProofClick
+              }
               className="
                 border
                 border-[#E0DAD0]
@@ -518,7 +825,12 @@ function Dashboard() {
                 />
 
                 <span className="font-serif text-[26px] text-[#24352F]">
-                  01
+                  {verifiedProofs
+                    .toString()
+                    .padStart(
+                      2,
+                      "0"
+                    )}
                 </span>
 
               </div>
@@ -533,7 +845,9 @@ function Dashboard() {
             {/* RECENT */}
 
             <button
-              onClick={handleProofClick}
+              onClick={
+                handleProofClick
+              }
               className="
                 border
                 border-[#E0DAD0]
@@ -556,7 +870,12 @@ function Dashboard() {
                 />
 
                 <span className="font-serif text-[26px] text-[#24352F]">
-                  01
+                  {recentProofs
+                    .toString()
+                    .padStart(
+                      2,
+                      "0"
+                    )}
                 </span>
 
               </div>
@@ -571,7 +890,9 @@ function Dashboard() {
             {/* BLOCKCHAIN */}
 
             <button
-              onClick={handleProofClick}
+              onClick={
+                handleProofClick
+              }
               className="
                 border
                 border-[#E0DAD0]
@@ -594,7 +915,12 @@ function Dashboard() {
                 />
 
                 <span className="font-serif text-[26px] text-[#24352F]">
-                  01
+                  {blockchainProofs
+                    .toString()
+                    .padStart(
+                      2,
+                      "0"
+                    )}
                 </span>
 
               </div>
@@ -632,7 +958,9 @@ function Dashboard() {
 
 
               <button
-                onClick={handleStampWork}
+                onClick={
+                  handleStampWork
+                }
                 className="text-[12px] font-medium text-[#9A7040] transition hover:text-[#173C34]"
               >
                 Stamp new
@@ -641,165 +969,277 @@ function Dashboard() {
             </div>
 
 
-            {/* SINGLE PROOF */}
+            {/* =================================================
+                REAL PROOF DATA
+            ================================================= */}
 
             <div className="relative px-6 py-6">
 
-              <button
-                onClick={handleProofClick}
-                className="
-                  flex
-                  w-full
-                  items-center
-                  gap-5
-                  pr-12
-                  text-left
-                  transition
-                  hover:bg-[#F7F3EB]
-                "
-              >
+              {/* LOADING */}
 
-                {/* FILE ICON */}
+              {loadingHistory ? (
 
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[4px] bg-[#F7E9E5] text-[#D34F3F]">
+                <div className="flex items-center justify-center py-10">
+
+                  <p className="text-[12px] text-[#858B87]">
+                    Loading your proofs...
+                  </p>
+
+                </div>
+
+              ) : !proof ? (
+
+                /* =================================================
+                    NO PROOFS
+                ================================================= */
+
+                <div className="flex flex-col items-center justify-center py-10 text-center">
 
                   <FileText
-                    size={22}
-                    strokeWidth={1.5}
+                    size={30}
+                    strokeWidth={1.3}
+                    className="text-[#B08347]"
                   />
 
-                </div>
-
-
-                {/* FILE NAME */}
-
-                <div className="min-w-0 flex-1">
-
-                  <p className="truncate text-[14px] font-medium text-[#28352F]">
-                    {proof.name}
+                  <p className="mt-3 text-[13px] font-medium text-[#4D5752]">
+                    No proofs yet
                   </p>
 
-                  <p className="mt-1.5 text-[11px] text-[#858B87]">
-                    PDF · {proof.size}
+                  <p className="mt-1 text-[11px] text-[#858B87]">
+                    Upload your creation to create your first proof.
                   </p>
 
-                </div>
-
-
-                {/* HASH */}
-
-                <div className="hidden w-[170px] sm:block">
-
-                  <p className="text-[10px] text-[#8A908C]">
-                    SHA-256
-                  </p>
-
-                  <p className="mt-1.5 font-mono text-[11px] text-[#4D5752]">
-                    {proof.hash}
-                  </p>
+                  <button
+                    onClick={
+                      handleStampWork
+                    }
+                    className="mt-4 text-[12px] font-medium text-[#9A7040] hover:text-[#173C34]"
+                  >
+                    Stamp your first creation →
+                  </button>
 
                 </div>
 
+              ) : (
 
-                {/* STATUS */}
+                /* =================================================
+                    LATEST PROOF
+                ================================================= */
 
-                <div className="hidden w-[100px] sm:block">
+                <>
 
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#E8F0E8] px-3 py-1.5 text-[10px] font-medium text-[#447052]">
+                  <button
+                    onClick={
+                      handleProofClick
+                    }
+                    className="
+                      flex
+                      w-full
+                      items-center
+                      gap-5
+                      pr-12
+                      text-left
+                      transition
+                      hover:bg-[#F7F3EB]
+                    "
+                  >
 
-                    <CheckCircle2
-                      size={12}
-                      strokeWidth={1.7}
-                    />
+                    {/* FILE ICON */}
 
-                    {proof.status}
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[4px] bg-[#F7E9E5] text-[#D34F3F]">
 
-                  </span>
+                      <FileText
+                        size={22}
+                        strokeWidth={1.5}
+                      />
 
-                </div>
-
-
-                {/* DATE */}
-
-                <div className="hidden w-[110px] text-right md:block">
-
-                  <p className="text-[11px] text-[#5F6863]">
-                    {proof.date}
-                  </p>
-
-                  <p className="mt-1 text-[10px] text-[#8A908C]">
-                    {proof.time}
-                  </p>
-
-                </div>
-
-              </button>
-
-
-              {/* =================================================
-                  THREE DOT MENU
-              ================================================= */}
-
-              <div className="absolute right-5 top-1/2 -translate-y-1/2">
-
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-
-                    setProofMenuOpen(
-                      (prev) => !prev
-                    );
-                  }}
-                  className="
-                    flex
-                    h-10
-                    w-10
-                    items-center
-                    justify-center
-                    text-[#747D77]
-                    transition
-                    hover:bg-[#EFEAE1]
-                  "
-                >
-
-                  <MoreVertical
-                    size={19}
-                    strokeWidth={1.5}
-                  />
-
-                </button>
+                    </div>
 
 
-                {/* MENU */}
+                    {/* FILE NAME */}
 
-                {proofMenuOpen && (
-                  <div className="absolute right-0 top-11 z-20 w-40 border border-[#DCD5CA] bg-[#FBF9F4] p-1.5 shadow-lg">
+                    <div className="min-w-0 flex-1">
+
+                      <p className="truncate text-[14px] font-medium text-[#28352F]">
+                        {proof.name}
+                      </p>
+
+                      <p className="mt-1.5 text-[11px] text-[#858B87]">
+                        {getFileType(
+                          proof
+                        )}{" "}
+                        ·{" "}
+                        {formatFileSize(
+                          proof.size
+                        )}
+                      </p>
+
+                    </div>
+
+
+                    {/* HASH */}
+
+                    <div className="hidden w-[170px] sm:block">
+
+                      <p className="text-[10px] text-[#8A908C]">
+                        SHA-256
+                      </p>
+
+                      <p
+                        className="mt-1.5 truncate font-mono text-[11px] text-[#4D5752]"
+                        title={
+                          proof.fileHash ||
+                          proof.fingerprint ||
+                          ""
+                        }
+                      >
+                        {proof.fileHash ||
+                          proof.fingerprint ||
+                          "—"}
+                      </p>
+
+                    </div>
+
+
+                    {/* STATUS */}
+
+                    <div className="hidden w-[100px] sm:block">
+
+                      <span
+                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-medium ${
+                          proof.status ===
+                          "Verified"
+                            ? "bg-[#E8F0E8] text-[#447052]"
+                            : "bg-[#F5EEDD] text-[#8A6A35]"
+                        }`}
+                      >
+
+                        {proof.status ===
+                        "Verified" ? (
+
+                          <CheckCircle2
+                            size={12}
+                            strokeWidth={
+                              1.7
+                            }
+                          />
+
+                        ) : (
+
+                          <Clock3
+                            size={12}
+                            strokeWidth={
+                              1.7
+                            }
+                          />
+
+                        )}
+
+                        {proof.status}
+
+                      </span>
+
+                    </div>
+
+
+                    {/* DATE */}
+
+                    <div className="hidden w-[110px] text-right md:block">
+
+                      <p className="text-[11px] text-[#5F6863]">
+                        {formatDate(
+                          proof.createdAt
+                        )}
+                      </p>
+
+                      <p className="mt-1 text-[10px] text-[#8A908C]">
+                        {formatTime(
+                          proof.createdAt
+                        )}
+                      </p>
+
+                    </div>
+
+                  </button>
+
+
+                  {/* =================================================
+                      THREE DOT MENU
+                  ================================================= */}
+
+                  <div className="absolute right-5 top-1/2 -translate-y-1/2">
 
                     <button
-                      onClick={() => {
-                        setProofMenuOpen(false);
-                        handleProofClick();
+                      onClick={(e) => {
+                        e.stopPropagation();
+
+                        setProofMenuOpen(
+                          (prev) =>
+                            !prev
+                        );
                       }}
-                      className="w-full px-3 py-3 text-left text-[12px] text-[#39433E] transition hover:bg-[#F0ECE4]"
+                      className="
+                        flex
+                        h-10
+                        w-10
+                        items-center
+                        justify-center
+                        text-[#747D77]
+                        transition
+                        hover:bg-[#EFEAE1]
+                      "
                     >
-                      View proof
+
+                      <MoreVertical
+                        size={19}
+                        strokeWidth={1.5}
+                      />
+
                     </button>
 
 
-                    <button
-                      onClick={() => {
-                        setProofMenuOpen(false);
-                        handleStampWork();
-                      }}
-                      className="w-full px-3 py-3 text-left text-[12px] text-[#39433E] transition hover:bg-[#F0ECE4]"
-                    >
-                      Stamp another
-                    </button>
+                    {/* MENU */}
+
+                    {proofMenuOpen && (
+
+                      <div className="absolute right-0 top-11 z-20 w-40 border border-[#DCD5CA] bg-[#FBF9F4] p-1.5 shadow-lg">
+
+                        <button
+                          onClick={() => {
+                            setProofMenuOpen(
+                              false
+                            );
+
+                            handleProofClick();
+                          }}
+                          className="w-full px-3 py-3 text-left text-[12px] text-[#39433E] transition hover:bg-[#F0ECE4]"
+                        >
+                          View proof
+                        </button>
+
+
+                        <button
+                          onClick={() => {
+                            setProofMenuOpen(
+                              false
+                            );
+
+                            handleStampWork();
+                          }}
+                          className="w-full px-3 py-3 text-left text-[12px] text-[#39433E] transition hover:bg-[#F0ECE4]"
+                        >
+                          Stamp another
+                        </button>
+
+                      </div>
+
+                    )}
 
                   </div>
-                )}
 
-              </div>
+                </>
+
+              )}
 
             </div>
 

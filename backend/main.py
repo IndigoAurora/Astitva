@@ -1,14 +1,19 @@
 from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+
 from PyPDF2 import PdfReader
 from docx import Document
 from PIL import Image
+
 import pytesseract
 import hashlib
 import io
 import re
 import pymysql
-from dotenv import load_dotenv
+import zipfile
 import os
+
+from dotenv import load_dotenv
 
 
 # ==========================================
@@ -26,17 +31,33 @@ app = FastAPI(title="ASTITVA Backend")
 
 
 # ==========================================
+# CORS
+# ==========================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ==========================================
 # MYSQL CONNECTION
 # ==========================================
 
 def get_db_connection():
 
     connection = pymysql.connect(
-        host=os.getenv("MYSQL_HOST"),
-        port=int(os.getenv("MYSQL_PORT")),
-        user=os.getenv("MYSQL_USER"),
-        password=os.getenv("MYSQL_PASSWORD"),
-        database=os.getenv("MYSQL_DATABASE"),
+        host=os.getenv("MYSQL_HOST", "127.0.0.1"),
+        port=int(os.getenv("MYSQL_PORT", "3307")),
+        user=os.getenv("MYSQL_USER", "root"),
+        password=os.getenv("MYSQL_PASSWORD", ""),
+        database=os.getenv("MYSQL_DATABASE", "astitva_db"),
         cursorclass=pymysql.cursors.DictCursor
     )
 
@@ -73,13 +94,10 @@ def health_check():
 
 def normalize_text(text):
 
-    # Convert text to lowercase
     text = text.lower()
 
-    # Remove extra spaces and new lines
     text = re.sub(r"\s+", " ", text)
 
-    # Remove leading/trailing spaces
     text = text.strip()
 
     return text
@@ -104,10 +122,7 @@ def create_fingerprint(text):
 # SAVE CERTIFICATE TO MYSQL
 # ==========================================
 
-def save_certificate(
-    filename,
-    fingerprint
-):
+def save_certificate(filename, fingerprint):
 
     connection = get_db_connection()
 
@@ -130,15 +145,231 @@ def save_certificate(
                 )
             )
 
-        connection.commit()
+            certificate_id = cursor.lastrowid
 
-        certificate_id = cursor.lastrowid
+        connection.commit()
 
         return certificate_id
 
     finally:
 
         connection.close()
+
+
+# ==========================================
+# EXTRACT TEXT FROM PDF
+# ==========================================
+
+def extract_pdf_text(file_data):
+
+    pdf_file = io.BytesIO(file_data)
+
+    reader = PdfReader(pdf_file)
+
+    text = ""
+
+    for page in reader.pages:
+
+        text += page.extract_text() or ""
+
+    return text
+
+
+# ==========================================
+# EXTRACT TEXT FROM DOCX
+# ==========================================
+
+def extract_docx_text(file_data):
+
+    docx_file = io.BytesIO(file_data)
+
+    document = Document(docx_file)
+
+    text = ""
+
+    for paragraph in document.paragraphs:
+
+        text += paragraph.text + "\n"
+
+    return text
+
+
+# ==========================================
+# EXTRACT TEXT FROM IMAGE
+# ==========================================
+
+def extract_image_text(file_data):
+
+    image_file = io.BytesIO(file_data)
+
+    image = Image.open(image_file)
+
+    return pytesseract.image_to_string(image)
+
+
+# ==========================================
+# EXTRACT TEXT FROM ZIP
+# ==========================================
+
+def extract_zip_text(file_data):
+
+    text_parts = []
+
+    supported_text_extensions = (
+        ".txt",
+        ".py",
+        ".java",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".html",
+        ".css",
+        ".c",
+        ".cpp",
+        ".h",
+        ".sql",
+        ".json",
+        ".xml",
+        ".md"
+    )
+
+    supported_image_extensions = (
+        ".jpg",
+        ".jpeg",
+        ".png"
+    )
+
+    try:
+
+        zip_file = io.BytesIO(file_data)
+
+        with zipfile.ZipFile(zip_file, "r") as zip_ref:
+
+            for zip_info in zip_ref.infolist():
+
+                # --------------------------------------
+                # Skip folders
+                # --------------------------------------
+
+                if zip_info.is_dir():
+                    continue
+
+                inner_filename = zip_info.filename.lower()
+
+                # --------------------------------------
+                # Skip unnecessary folders
+                # --------------------------------------
+
+                skip_folders = (
+                    "node_modules/",
+                    "venv/",
+                    ".venv/",
+                    ".git/",
+                    "__pycache__/",
+                    "dist/",
+                    "build/"
+                )
+
+                if any(
+                    folder in inner_filename
+                    for folder in skip_folders
+                ):
+                    continue
+
+                try:
+
+                    inner_data = zip_ref.read(zip_info)
+
+                    # ==================================
+                    # TEXT / PROGRAMMING FILE
+                    # ==================================
+
+                    if inner_filename.endswith(
+                        supported_text_extensions
+                    ):
+
+                        inner_text = inner_data.decode(
+                            "utf-8",
+                            errors="ignore"
+                        )
+
+                        text_parts.append(
+                            f"\n--- {zip_info.filename} ---\n"
+                        )
+
+                        text_parts.append(inner_text)
+
+
+                    # ==================================
+                    # PDF INSIDE ZIP
+                    # ==================================
+
+                    elif inner_filename.endswith(".pdf"):
+
+                        pdf_text = extract_pdf_text(
+                            inner_data
+                        )
+
+                        text_parts.append(
+                            f"\n--- {zip_info.filename} ---\n"
+                        )
+
+                        text_parts.append(pdf_text)
+
+
+                    # ==================================
+                    # DOCX INSIDE ZIP
+                    # ==================================
+
+                    elif inner_filename.endswith(".docx"):
+
+                        docx_text = extract_docx_text(
+                            inner_data
+                        )
+
+                        text_parts.append(
+                            f"\n--- {zip_info.filename} ---\n"
+                        )
+
+                        text_parts.append(docx_text)
+
+
+                    # ==================================
+                    # IMAGE INSIDE ZIP
+                    # ==================================
+
+                    elif inner_filename.endswith(
+                        supported_image_extensions
+                    ):
+
+                        image_text = extract_image_text(
+                            inner_data
+                        )
+
+                        text_parts.append(
+                            f"\n--- {zip_info.filename} ---\n"
+                        )
+
+                        text_parts.append(image_text)
+
+                except Exception:
+
+                    # If one file inside ZIP fails,
+                    # continue processing other files.
+                    continue
+
+        text = "\n".join(text_parts)
+
+        if not text.strip():
+
+            return None
+
+        return text
+
+    except zipfile.BadZipFile:
+
+        return None
 
 
 # ==========================================
@@ -150,104 +381,156 @@ async def upload_file(
     file: UploadFile = File(...)
 ):
 
-    # Read uploaded file
+    # ======================================
+    # READ FILE
+    # ======================================
+
     file_data = await file.read()
 
-    filename = file.filename.lower()
+    original_filename = file.filename or "unknown"
+
+    filename = original_filename.lower()
 
 
     # ======================================
-    # PDF
+    # CHECK EMPTY FILE
     # ======================================
 
-    if filename.endswith(".pdf"):
+    if not file_data:
 
-        pdf_file = io.BytesIO(file_data)
-
-        reader = PdfReader(pdf_file)
-
-        text = ""
-
-        for page in reader.pages:
-
-            text += page.extract_text() or ""
+        return {
+            "message": "Uploaded file is empty"
+        }
 
 
     # ======================================
-    # DOCX
+    # EXTRACT TEXT
     # ======================================
 
-    elif filename.endswith(".docx"):
+    try:
 
-        docx_file = io.BytesIO(file_data)
+        # ==================================
+        # PDF
+        # ==================================
 
-        document = Document(docx_file)
+        if filename.endswith(".pdf"):
 
-        text = ""
-
-        for paragraph in document.paragraphs:
-
-            text += paragraph.text + "\n"
-
-
-    # ======================================
-    # IMAGE OCR
-    # ======================================
-
-    elif filename.endswith((
-        ".jpg",
-        ".jpeg",
-        ".png"
-    )):
-
-        image_file = io.BytesIO(file_data)
-
-        image = Image.open(image_file)
-
-        text = pytesseract.image_to_string(
-            image
-        )
+            text = extract_pdf_text(
+                file_data
+            )
 
 
-    # ======================================
-    # TXT AND PROGRAMMING FILES
-    # ======================================
+        # ==================================
+        # DOCX
+        # ==================================
 
-    elif filename.endswith((
-        ".txt",
-        ".py",
-        ".java",
-        ".js",
-        ".html",
-        ".css",
-        ".c",
-        ".cpp",
-        ".h",
-        ".sql"
-    )):
+        elif filename.endswith(".docx"):
 
-        text = file_data.decode(
-            "utf-8",
-            errors="ignore"
-        )
+            text = extract_docx_text(
+                file_data
+            )
 
 
-    # ======================================
-    # UNSUPPORTED FILE
-    # ======================================
+        # ==================================
+        # IMAGE OCR
+        # ==================================
 
-    else:
+        elif filename.endswith(
+            (
+                ".jpg",
+                ".jpeg",
+                ".png"
+            )
+        ):
+
+            text = extract_image_text(
+                file_data
+            )
+
+
+        # ==================================
+        # TXT / PROGRAMMING FILES
+        # ==================================
+
+        elif filename.endswith(
+            (
+                ".txt",
+                ".py",
+                ".java",
+                ".js",
+                ".jsx",
+                ".ts",
+                ".tsx",
+                ".html",
+                ".css",
+                ".c",
+                ".cpp",
+                ".h",
+                ".sql",
+                ".json",
+                ".xml",
+                ".md"
+            )
+        ):
+
+            text = file_data.decode(
+                "utf-8",
+                errors="ignore"
+            )
+
+
+        # ==================================
+        # ZIP
+        # ==================================
+
+        elif filename.endswith(".zip"):
+
+            text = extract_zip_text(
+                file_data
+            )
+
+            if text is None:
+
+                return {
+                    "message":
+                    "ZIP file is invalid or contains no supported readable files",
+
+                    "filename":
+                    original_filename
+                }
+
+
+        # ==================================
+        # UNSUPPORTED
+        # ==================================
+
+        else:
+
+            return {
+
+                "message":
+                "File type not supported yet",
+
+                "filename":
+                original_filename,
+
+                "content_type":
+                file.content_type
+            }
+
+
+    except Exception as error:
 
         return {
 
             "message":
-            "File type not supported yet",
+            "Error while processing file",
 
             "filename":
-            file.filename,
+            original_filename,
 
-            "content_type":
-            file.content_type
+            "processing_error":
+            str(error)
         }
 
 
@@ -267,7 +550,7 @@ async def upload_file(
     try:
 
         certificate_id = save_certificate(
-            file.filename,
+            original_filename,
             fingerprint
         )
 
@@ -279,7 +562,7 @@ async def upload_file(
             "File processed but database save failed",
 
             "filename":
-            file.filename,
+            original_filename,
 
             "fingerprint":
             fingerprint,
@@ -302,7 +585,7 @@ async def upload_file(
         certificate_id,
 
         "filename":
-        file.filename,
+        original_filename,
 
         "content_type":
         file.content_type,

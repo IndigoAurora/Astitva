@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import { ethers } from "ethers";
 
 import {
   Upload,
@@ -30,7 +31,7 @@ const DB_NAME = "astitva-files";
 const DB_VERSION = 1;
 const STORE_NAME = "proofs";
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
 
 const ALLOWED_TYPES = [
   "application/pdf",
@@ -64,6 +65,49 @@ const ALLOWED_EXTENSIONS = [
   ".svg",
   ".json",
   ".js",
+];
+
+const CONTRACT_ADDRESS =
+  "0x742881C3b77F8D81C0938Af140690BA8E3D02D26";
+
+const CONTRACT_ABI = [
+  {
+    inputs: [
+      {
+        internalType: "string",
+        name: "fileHash",
+        type: "string",
+      },
+      {
+        internalType: "uint256",
+        name: "timestamp",
+        type: "uint256",
+      },
+    ],
+    name: "logStamp",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      {
+        internalType: "string",
+        name: "",
+        type: "string",
+      },
+    ],
+    name: "fileStamps",
+    outputs: [
+      {
+        internalType: "uint256",
+        name: "",
+        type: "uint256",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
 ];
 
 /* =========================================================
@@ -292,6 +336,65 @@ const isPreviewable = (file) => {
    COMPONENT
 ========================================================= */
 
+/* =========================================================
+   BLOCKCHAIN HELPERS
+========================================================= */
+
+const connectWallet = async () => {
+  if (!window.ethereum) {
+    throw new Error(
+      "MetaMask is not installed. Please install MetaMask first."
+    );
+  }
+
+  const provider = new ethers.BrowserProvider(window.ethereum);
+
+  await provider.send("eth_requestAccounts", []);
+
+  const network = await provider.getNetwork();
+
+  // Ethereum Sepolia chain ID = 11155111
+  if (network.chainId !== 11155111n) {
+    throw new Error(
+      "Please switch MetaMask to Ethereum Sepolia Testnet."
+    );
+  }
+
+  const signer = await provider.getSigner();
+
+  const contract = new ethers.Contract(
+    CONTRACT_ADDRESS,
+    CONTRACT_ABI,
+    signer
+  );
+
+  return {
+    provider,
+    signer,
+    contract,
+  };
+};
+
+
+const stampOnBlockchain = async (fileHash) => {
+  const { contract } = await connectWallet();
+
+  const timestamp = Math.floor(Date.now() / 1000);
+
+  const transaction = await contract.logStamp(
+    fileHash,
+    timestamp
+  );
+
+  const receipt = await transaction.wait();
+
+  return {
+    txHash: transaction.hash,
+    timestamp,
+    receipt,
+  };
+};
+
 function Uploads() {
   const navigate = useNavigate();
 
@@ -373,7 +476,7 @@ function Uploads() {
       setMessage({
         type: "error",
         text:
-          "File is too large. Maximum allowed size is 100 MB.",
+          "File is too large. Maximum allowed size is 500 MB.",
       });
 
       return;
@@ -544,158 +647,179 @@ function Uploads() {
   ======================================================= */
 
   const handleStamp = async () => {
-    if (!selectedFile) {
-      setMessage({
-        type: "error",
-        text: "Please select a file first.",
-      });
+  if (!selectedFile) {
+    setMessage({
+      type: "error",
+      text: "Please select a file first.",
+    });
+    return;
+  }
 
-      return;
+  const apiUrl = import.meta.env.VITE_API_URL;
+
+  if (!apiUrl) {
+    setMessage({
+      type: "error",
+      text: "Backend API URL is not configured.",
+    });
+    return;
+  }
+
+  setStamping(true);
+  setMessage(null);
+
+  try {
+    /* ==========================================
+       STEP 1: SEND FILE TO BACKEND
+    ========================================== */
+
+    const formData = new FormData();
+
+    formData.append("file", selectedFile);
+
+    const response = await axios.post(
+      `${apiUrl.replace(/\/$/, "")}/upload`,
+      formData
+    );
+
+    const data = response.data;
+
+    if (!data) {
+      throw new Error(
+        "The backend returned an empty response."
+      );
     }
 
-    const apiUrl =
-      import.meta.env.VITE_STAMP_API_URL;
-
-    if (!apiUrl) {
-      setMessage({
-        type: "error",
-        text:
-          "The stamping backend is not connected yet. Ask Anshul for the API endpoint.",
-      });
-
-      return;
+    if (!data.fingerprint) {
+      throw new Error(
+        "Backend did not return a fingerprint."
+      );
     }
 
-    setStamping(true);
-    setMessage(null);
 
-    try {
-      const formData = new FormData();
+    /* ==========================================
+       STEP 2: CONNECT TO METAMASK
+    ========================================== */
 
-      formData.append(
-        "file",
-        selectedFile
+    setMessage({
+      type: "success",
+      text: "File fingerprint created. Opening MetaMask...",
+    });
+
+    const blockchainResult =
+      await stampOnBlockchain(
+        data.fingerprint
       );
 
-      const response = await axios.post(
-        apiUrl,
-        formData,
-        {
-          headers: {
-            "Content-Type":
-              "multipart/form-data",
-          },
-        }
-      );
 
-      const data = response.data;
+    /* ==========================================
+       STEP 3: CREATE PROOF
+    ========================================== */
 
-      /*
-        Expected backend response:
+    const proof = {
+      id: crypto.randomUUID(),
 
-        {
-          txHash: "...",
-          timestamp: "...",
-          fileHash: "...",
-          fingerprint: "..."
-        }
-      */
+      name: selectedFile.name,
 
-      if (!data?.txHash) {
-        throw new Error(
-          "The backend did not return a transaction hash."
-        );
-      }
+      size: selectedFile.size,
 
-      const proof = {
-        id: crypto.randomUUID(),
+      type: selectedFile.type,
 
-        name: selectedFile.name,
+      fileBlob: selectedFile,
 
-        size: selectedFile.size,
+      createdAt: new Date().toISOString(),
 
-        type: selectedFile.type,
+      status: "Verified",
 
-        fileBlob: selectedFile,
+      // REAL Ethereum transaction hash
+      txHash: blockchainResult.txHash,
 
-        createdAt: new Date().toISOString(),
+      timestamp:
+        new Date(
+          blockchainResult.timestamp * 1000
+        ).toISOString(),
 
-        status: "Verified",
+      // REAL SHA-256 fingerprint
+      fileHash: data.fingerprint,
 
-        txHash: data.txHash,
+      fingerprint: data.fingerprint,
+    };
 
-        timestamp:
-          data.timestamp ||
-          new Date().toISOString(),
 
-        fileHash:
-          data.fileHash || "",
+    /* ==========================================
+       STEP 4: SAVE TO LOCAL HISTORY
+    ========================================== */
+
+    await saveProof(proof);
+
+    setHistory((current) => [
+      proof,
+      ...current,
+    ]);
+
+
+    /* ==========================================
+       STEP 5: OPEN CERTIFICATE PAGE
+    ========================================== */
+
+    navigate("/certificate", {
+      state: {
+        fileName: selectedFile.name,
 
         fingerprint:
-          data.fingerprint || "",
-      };
+          data.fingerprint,
 
-      await saveProof(proof);
+        fileHash:
+          data.fingerprint,
 
-      setHistory((current) => [
-        proof,
-        ...current,
-      ]);
+        txHash:
+          blockchainResult.txHash,
 
-      /*
-        Send REAL backend response to certificate.
-      */
+        timestamp:
+          new Date(
+            blockchainResult.timestamp * 1000
+          ).toISOString(),
+      },
+    });
 
-      navigate("/certificate", {
-        state: {
-          fileName: selectedFile.name,
+  } catch (error) {
+    console.error(
+      "Stamping error:",
+      error
+    );
 
-          fingerprint:
-            data.fingerprint || "",
+    let errorMessage =
+      "Something went wrong while stamping your file.";
 
-          fileHash:
-            data.fileHash || "",
-
-          txHash: data.txHash,
-
-          timestamp:
-            data.timestamp ||
-            new Date().toISOString(),
-        },
-      });
-
-    } catch (error) {
-      console.error(
-        "Stamping error:",
-        error
-      );
-
-      let errorMessage =
-        "Something went wrong while stamping your file.";
-
-      if (
-        error.response?.data?.detail
-      ) {
-        errorMessage =
-          error.response.data.detail;
-      } else if (
-        error.response?.data?.message
-      ) {
-        errorMessage =
-          error.response.data.message;
-      } else if (error.message) {
-        errorMessage =
-          error.message;
-      }
-
-      setMessage({
-        type: "error",
-        text: errorMessage,
-      });
-    } finally {
-      setStamping(false);
+    if (
+      error.code === "ACTION_REJECTED"
+    ) {
+      errorMessage =
+        "Transaction was rejected in MetaMask.";
+    } else if (
+      error.response?.data?.detail
+    ) {
+      errorMessage =
+        error.response.data.detail;
+    } else if (
+      error.response?.data?.message
+    ) {
+      errorMessage =
+        error.response.data.message;
+    } else if (error.message) {
+      errorMessage =
+        error.message;
     }
-  };
+
+    setMessage({
+      type: "error",
+      text: errorMessage,
+    });
+
+  } finally {
+    setStamping(false);
+  }
+};
 
   /* =======================================================
      SAVE FOR LATER
@@ -921,7 +1045,7 @@ function Uploads() {
 
 
                 <div className="mt-5 rounded-full border border-[#D9D1C5] bg-[#F8F5EE] px-4 py-2 text-[9px] text-[#747C77]">
-                  Maximum file size: 100 MB
+                  Maximum file size: 500 MB
                 </div>
 
 
