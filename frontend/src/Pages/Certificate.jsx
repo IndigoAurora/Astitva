@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+
 import {
   ArrowLeft,
+  ArrowRight,
   CheckCircle2,
   Copy,
   ExternalLink,
